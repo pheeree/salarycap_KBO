@@ -1,0 +1,292 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(fpp3)
+library(psych)
+```
+```{r}
+dt_bat_fnl <- read_csv("./data/dt_bat_fnl_step2.csv", locale = locale("ko", encoding = "EUC-KR"))
+dt_pit_fnl <- read_csv("./data/dt_pit_fnl_step2.csv", locale = locale("ko", encoding = "EUC-KR"))
+team_rank <- read_csv("./data/team_rank_fnl.csv")
+```
+```{r}
+dt_pit_fnl <-
+  dt_pit_fnl %>%
+  mutate(pos = "P")
+```
+
+```{r}
+dt_bat_fnl
+dt_pit_fnl
+team_rank
+```
+# WAR vs SALARY
+```{r}
+dt_bat_war <-
+dt_bat_fnl %>%
+  select(YYYY, team, most_value_fnl, name, birth, WAR, salary) %>%
+  rename(pos = most_value_fnl)
+dt_pit_war <-
+dt_pit_fnl %>%
+  select(YYYY, team, pos, name, birth, WAR, salary)
+
+dt_team_war <- bind_rows(dt_bat_war, dt_pit_war)
+dt_team_war
+```
+```{r}
+dt_team_war <-
+dt_team_war %>%
+  group_by(YYYY, team) %>%
+  mutate(rank_WAR = rank(-WAR, ties.method = "max"),
+         rank_sal = rank(-salary, ties.method = "max"),
+         gap_war = abs(rank_WAR - rank_sal)) %>%
+  mutate(gap_fair = ifelse(gap_war > 3, 0, 1),
+         cnt = 1)
+dt_team_war <-
+dt_team_war %>%
+  group_by(YYYY, team) %>%
+  summarise(ratio_gap = sum(gap_fair)/sum(cnt),
+            gap_war = sum(gap_war))
+```
+```{r}
+dt_team_war <- inner_join(dt_team_war, team_rank)
+```
+```{r}
+dt_team_war %>%
+  ggplot(aes(x = ratio_gap, y = wl_pct, col = team)) +
+  geom_point() +
+  geom_abline()
+
+dt_team_war %>%
+  ggplot(aes(x = gap_war, y = wl_pct, col = team)) +
+  geom_point() +
+  geom_abline()
+```
+
+
+```{r}
+vec_eigen_bat <- eigen(cor(na.omit(dt_bat_fnl[, 7:33])))
+plot(vec_eigen_bat$value, type = "o")
+
+vec_eigen_pit <- eigen(cor(na.omit(dt_pit[, 6:34])))
+plot(vec_eigen_pit$value, type = "o")
+
+```
+
+```{r}
+a <- FA_bat$loadings[,1][2]
+b <- FA_bat$loadings[,1][3]
+
+a+b
+```
+#  PCA
+```{r}
+colnames(dt_bat_fnl)[13] <- "H_2B"
+colnames(dt_bat_fnl)[14] <- "H_3B"
+colnames(dt_bat_fnl)[32] <- "wRC_p"
+
+colnames(dt_pit_fnl)[20] <- "H_2B"
+colnames(dt_pit_fnl)[21] <- "H_3B"
+colnames(dt_pit_fnl)[32] <- "ERA_p"
+colnames(dt_pit_fnl)[33] <- "FIP_p"
+```
+
+```{r}
+PCA_bat <- principal(dt_bat_fnl[, 7:33], nfactors = 3, rotate = "varimax") 
+PCA_bat
+```
+```{r}
+biplot.psych(PCA_bat)
+```
+```{r}
+PCA_bat$loadings
+```
+
+```{r}
+PCA_pit <- principal(dt_pit_fnl[, 6:34], nfactors = 4, rotate = "varimax") 
+PCA_pit
+biplot.psych(PCA_pit)
+```
+```{r}
+PCA_pit$loadings
+```
+
+
+## feature in BAT
+RC1 : WAR G PA AB R H H_2B HR TB RBI BB HBP IBB SO DP SF WPA
+RC2 : AVG OBP SLG OPS wOBA wRC+
+RC3 : H_3B SB CS SH
+```{r}
+dt_bat_fnl <-
+dt_bat_fnl %>%
+  mutate(RC1_consistency
+         = WAR*PCA_bat$loadings[,1][1] + G*PCA_bat$loadings[,1][2] +
+           PA*PCA_bat$loadings[,1][3] + AB*PCA_bat$loadings[,1][4] +
+           R*PCA_bat$loadings[,1][5]  + H*PCA_bat$loadings[,1][6] +
+           H_2B*PCA_bat$loadings[,1][7] + HR*PCA_bat$loadings[,1][9] +
+           TB*PCA_bat$loadings[,1][10] + RBI*PCA_bat$loadings[,1][11] +
+           BB*PCA_bat$loadings[,1][14] + HBP*PCA_bat$loadings[,1][15] +
+           IBB*PCA_bat$loadings[,1][16] + SO*PCA_bat$loadings[,1][17] +
+           DP*PCA_bat$loadings[,1][18] + SF*PCA_bat$loadings[,1][20] +
+           WPA*PCA_bat$loadings[,1][27],
+         RC2_efficiency
+         = AVG*PCA_bat$loadings[,2][21] + OBP*PCA_bat$loadings[,2][22] +
+           SLG*PCA_bat$loadings[,2][23] + OPS*PCA_bat$loadings[,2][24] +
+           wOBA*PCA_bat$loadings[,2][25] + wRC_p*PCA_bat$loadings[,2][26],
+         RC3_speed
+         = H_3B*PCA_bat$loadings[,3][8] + SB*PCA_bat$loadings[,3][12] +
+           CS*PCA_bat$loadings[,3][13] + SH*PCA_bat$loadings[,3][19]
+           )
+dt_bat_fnl
+```
+## feature in PITCHER
+RC1 : GS W L INN R ER BF H 2B 3B HR BB HBP SO WP
+RC2 : ERA FIP WHIP ERA+ FIP+
+RC3 : WAR CG SHO WPA
+RC4 : G SV HLD IBB
+```{r}
+dt_pit_fnl <-
+dt_pit_fnl %>%
+  mutate(RC1_consistency
+         = GS*PCA_pit$loadings[,1][5] + W*PCA_pit$loadings[,1][6] +
+           L*PCA_pit$loadings[,1][7] + INN*PCA_pit$loadings[,1][10] +
+           R*PCA_pit$loadings[,1][11] + ER*PCA_pit$loadings[,1][12] +
+           BF*PCA_pit$loadings[,1][13] + H*PCA_pit$loadings[,1][14] +
+           H_2B*PCA_pit$loadings[,1][15] + H_3B*PCA_pit$loadings[,1][16] +
+           HR*PCA_pit$loadings[,1][17] + BB*PCA_pit$loadings[,1][18] +
+           HBP*PCA_pit$loadings[,1][20] + SO*PCA_pit$loadings[,1][21] +
+           WP*PCA_pit$loadings[,1][23],
+         RC2_efficiency
+         = ERA*PCA_pit$loadings[,2][24] + FIP*PCA_pit$loadings[,2][25] +
+           WHIP*PCA_pit$loadings[,2][26] + ERA_p*PCA_pit$loadings[,2][27] +
+           FIP_p*PCA_pit$loadings[,2][28],
+         RC3_starter
+         = WAR*PCA_pit$loadings[,4][1] + CG*PCA_pit$loadings[,4][3] +
+           SHO*PCA_pit$loadings[,4][4] + WPA*PCA_pit$loadings[,4][29],
+         RC4_bullpen
+         = G*PCA_pit$loadings[,3][2] + SV*PCA_pit$loadings[,3][8] +
+           HLD*PCA_pit$loadings[,3][9] + IBB*PCA_pit$loadings[,3][19]
+           )
+dt_pit_fnl
+```
+```{r}
+write.csv(dt_bat_fnl, "dt_bat_pca.csv")
+write.csv(dt_pit_fnl, "dt_pit_pca.csv")
+```
+
+# Linear Regression by PCA features
+```{r}
+dt_bat_fnl <-
+dt_bat_fnl %>%
+  mutate(birth_year = as.numeric(str_sub(birth, 1, 4)),
+         age = YYYY - birth_year) %>%
+  mutate(team = as.factor(team),
+         pos = as.factor(pos))
+dt_pit_fnl <-
+dt_pit_fnl %>%
+  mutate(birth_year = as.numeric(str_sub(birth, 1, 4)),
+         age = YYYY - birth_year) %>%
+  mutate(team = as.factor(team))
+```
+
+```{r}
+dt_bat_fnl <-
+dt_bat_fnl %>%
+  arrange(YYYY) %>%
+  arrange(name) %>%
+  group_by(name, birth) %>%
+  mutate(salary_lag = lag(salary))
+
+dt_pit_fnl <-
+dt_pit_fnl %>%
+  arrange(YYYY) %>%
+  arrange(name) %>%
+  group_by(name, birth) %>%
+  mutate(salary_lag = lag(salary))
+```
+
+```{r}
+lm_fit_bat_PCA <- lm(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team, data = dt_bat_fnl)
+summary(lm_fit_bat_PCA)
+
+lm_fit_bat_lag <- lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team, data = dt_bat_fnl)
+summary(lm_fit_bat_lag)
+```
+
+```{r}
+# make a Decision Tree spec
+dctree_spec <- decision_tree() %>% 
+  set_engine("rpart") %>% 
+  set_mode("regression")
+
+#fit Decision Tree nodel
+dctree_fit_bat <- dctree_spec %>% 
+  fit(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team,
+      data = dt_bat_fnl)
+dctree_fit_bat
+
+dctree_fit_bat_lag <- dctree_spec %>% 
+  fit(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team,
+      data = dt_bat_fnl)
+dctree_fit_bat_lag
+
+
+library(rpart.plot)
+rpart.plot(dctree_fit_bat$fit)
+rpart.plot(dctree_fit_bat_lag$fit)
+```
+
+
+```{r}
+lm_fit_pit_PCA <- lm(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team
+                      , data = dt_pit_fnl)
+summary(lm_fit_pit_PCA)
+
+lm_fit_pit_lag <- lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team
+                      , data = dt_pit_fnl)
+summary(lm_fit_pit_lag)
+```
+
+```{r}
+
+#fit Decision Tree nodel
+dctree_fit_pit <- dctree_spec %>% 
+  fit(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team,
+      data = dt_pit_fnl)
+dctree_fit
+
+dctree_fit_pit_lag <- dctree_spec %>% 
+  fit(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team,
+      data = dt_pit_fnl)
+dctree_fit_pit_lag
+
+
+library(rpart.plot)
+rpart.plot(dctree_fit_pit$fit)
+rpart.plot(dctree_fit_pit_lag$fit)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
