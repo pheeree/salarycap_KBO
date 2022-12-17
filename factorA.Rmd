@@ -2,18 +2,22 @@
 title: "R Notebook"
 output: html_notebook
 ---
-
+# 0. packages
 ```{r}
 library(tidyverse)
 library(tidymodels)
 library(fpp3)
 library(psych)
 ```
+# 1. DATA
 ```{r}
 dt_bat_fnl <- read_csv("./data/dt_bat_fnl_step2.csv", locale = locale("ko", encoding = "EUC-KR"))
 dt_pit_fnl <- read_csv("./data/dt_pit_fnl_step2.csv", locale = locale("ko", encoding = "EUC-KR"))
 team_rank <- read_csv("./data/team_rank_fnl.csv")
+dt_debut <- read_csv("./data/player_debut_career.csv")
 ```
+# 2. Processing DATA
+## 1) 투수 데이터에 포지션 컬럼을 추가한다.
 ```{r}
 dt_pit_fnl <-
   dt_pit_fnl %>%
@@ -24,6 +28,7 @@ dt_pit_fnl <-
 dt_bat_fnl
 dt_pit_fnl
 team_rank
+dt_debut
 ```
 # WAR vs SALARY
 ```{r}
@@ -50,7 +55,7 @@ dt_team_war %>%
 dt_team_war <-
 dt_team_war %>%
   group_by(YYYY, team) %>%
-  summarise(ratio_gap = sum(gap_fair)/sum(cnt),
+  summarise(fair_ratio_gap = sum(gap_fair)/sum(cnt),
             gap_war = sum(gap_war))
 ```
 ```{r}
@@ -58,17 +63,34 @@ dt_team_war <- inner_join(dt_team_war, team_rank)
 ```
 ```{r}
 dt_team_war %>%
-  ggplot(aes(x = ratio_gap, y = wl_pct, col = team)) +
-  geom_point() +
-  geom_abline()
+  ggplot(aes(x = fair_ratio_gap, y = wl_pct)) +
+  geom_point(aes(col = team)) +
+  stat_smooth(method = "lm")
 
 dt_team_war %>%
   ggplot(aes(x = gap_war, y = wl_pct, col = team)) +
   geom_point() +
   geom_abline()
 ```
+```{r}
+dt_team_war %>%
+  select(YYYY, team, fair_ratio_gap, wl_pct) %>%
+  arrange(desc(wl_pct))
 
+dt_team_war %>%
+  mutate(up_50 = if_else(wl_pct >= 0.5, "up_50", "below_50")) %>%
+  group_by(YYYY, up_50) %>%
+  summarise(fair_ratio_gap = mean(fair_ratio_gap)) %>%
+  pivot_wider(names_from = up_50,
+              values_from = fair_ratio_gap)
 
+dt_team_war %>%
+  mutate(sum_pct_gap = fair_ratio_gap + wl_pct) %>%
+  select(YYYY, team, sum_pct_gap, fair_ratio_gap, wl_pct) %>%
+  arrange(desc(sum_pct_gap))
+```
+
+# 4. PCA
 ```{r}
 vec_eigen_bat <- eigen(cor(na.omit(dt_bat_fnl[, 7:33])))
 plot(vec_eigen_bat$value, type = "o")
@@ -174,12 +196,8 @@ dt_pit_fnl %>%
            )
 dt_pit_fnl
 ```
-```{r}
-write.csv(dt_bat_fnl, "dt_bat_pca.csv")
-write.csv(dt_pit_fnl, "dt_pit_pca.csv")
-```
-
-# Linear Regression by PCA features
+# feature update
+##
 ```{r}
 dt_bat_fnl <-
 dt_bat_fnl %>%
@@ -193,7 +211,7 @@ dt_pit_fnl %>%
          age = YYYY - birth_year) %>%
   mutate(team = as.factor(team))
 ```
-
+##
 ```{r}
 dt_bat_fnl <-
 dt_bat_fnl %>%
@@ -209,12 +227,36 @@ dt_pit_fnl %>%
   group_by(name, birth) %>%
   mutate(salary_lag = lag(salary))
 ```
+## career update
+```{r}
+dt_bat_fnl <- inner_join(dt_bat_fnl, dt_debut %>% select(name, birth, debut))
+dt_pit_fnl <- inner_join(dt_pit_fnl, dt_debut %>% select(name, birth, debut))
+```
+```{r}
+dt_bat_fnl <-
+dt_bat_fnl %>%
+  mutate(career = YYYY - debut)
+dt_pit_fnl <-
+dt_pit_fnl %>%
+  mutate(career = YYYY - debut)
+```
+
 
 ```{r}
-lm_fit_bat_PCA <- lm(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team, data = dt_bat_fnl)
+write.csv(dt_bat_fnl, "dt_bat_pca.csv")
+write.csv(dt_pit_fnl, "dt_pit_pca.csv")
+```
+
+# Linear Regression by PCA features
+
+
+
+
+```{r}
+lm_fit_bat_PCA <- lm(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + career + team, data = dt_bat_fnl)
 summary(lm_fit_bat_PCA)
 
-lm_fit_bat_lag <- lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team, data = dt_bat_fnl)
+lm_fit_bat_lag <- lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + career + team, data = dt_bat_fnl)
 summary(lm_fit_bat_lag)
 ```
 
@@ -226,12 +268,12 @@ dctree_spec <- decision_tree() %>%
 
 #fit Decision Tree nodel
 dctree_fit_bat <- dctree_spec %>% 
-  fit(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team,
+  fit(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + career + team,
       data = dt_bat_fnl)
 dctree_fit_bat
 
 dctree_fit_bat_lag <- dctree_spec %>% 
-  fit(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + team,
+  fit(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + career + team,
       data = dt_bat_fnl)
 dctree_fit_bat_lag
 
@@ -241,14 +283,46 @@ rpart.plot(dctree_fit_bat$fit)
 rpart.plot(dctree_fit_bat_lag$fit)
 ```
 
+```{r}
+dt_pit_fnl %>%
+  filter(team == "EAGLES") %>%
+  lm(log(salary_log) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + career
+     , data = .) %>%
+  summary()
+
+dt_bat_fnl %>%
+  filter(team == "EAGLES") %>%
+  lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + career
+     , data = .) %>%
+  summary()
+
+dt_pit_fnl %>%
+  filter(team == "DYNOS") %>%
+  lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + career
+     , data = .) %>%
+  summary()
+
+dt_bat_fnl %>%
+  filter(team == "DYNOS") %>%
+  lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + career
+     , data = .) %>%
+  summary()
+
+dt_bat_fnl %>%
+  filter(PA > 446) %>%
+  lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_speed + age + career +team
+     , data = .) %>%
+  summary()
+```
+
 
 ```{r}
-lm_fit_pit_PCA <- lm(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team
-                      , data = dt_pit_fnl)
+lm_fit_pit_PCA <- lm(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + career + team
+                     , data = dt_pit_fnl)
 summary(lm_fit_pit_PCA)
 
-lm_fit_pit_lag <- lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team
-                      , data = dt_pit_fnl)
+lm_fit_pit_lag <- lm(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + career + team
+                     , data = dt_pit_fnl)
 summary(lm_fit_pit_lag)
 ```
 
@@ -256,12 +330,12 @@ summary(lm_fit_pit_lag)
 
 #fit Decision Tree nodel
 dctree_fit_pit <- dctree_spec %>% 
-  fit(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team,
+  fit(log(salary) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + career + team,
       data = dt_pit_fnl)
-dctree_fit
+dctree_fit_pit
 
 dctree_fit_pit_lag <- dctree_spec %>% 
-  fit(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + team,
+  fit(log(salary_lag) ~ RC1_consistency + RC2_efficiency + RC3_starter + RC4_bullpen + age + career + team,
       data = dt_pit_fnl)
 dctree_fit_pit_lag
 
@@ -269,6 +343,9 @@ dctree_fit_pit_lag
 library(rpart.plot)
 rpart.plot(dctree_fit_pit$fit)
 rpart.plot(dctree_fit_pit_lag$fit)
+```
+```{r}
+dctree_fit_pit$elapsed
 ```
 
 
