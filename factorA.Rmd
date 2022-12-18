@@ -57,7 +57,8 @@ dt_team_war <-
 dt_team_war %>%
   group_by(YYYY, team) %>%
   summarise(fair_ratio_gap = sum(gap_fair)/sum(cnt),
-            gap_war = sum(gap_war))
+            gap_war = sum(gap_war),
+            WAR = mean(WAR))
 ```
 ```{r}
 dt_team_war <- inner_join(dt_team_war, team_rank)
@@ -493,6 +494,16 @@ dt_bat_fnl %>%
 ```
 
 ## gap :salary vs model_salary
+```{r}
+dt_team_war %>%
+  ggplot(aes(x = WAR, y = wl_pct)) +
+  geom_point(aes(col = "red", alpha = 0.3)) +
+  geom_smooth(method = "lm") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+
+
 ```{r}
 dt_bat_fnl_model %>%
   #filter(team %in% c("EAGLES", "DYNOS")) %>%
